@@ -1,7 +1,7 @@
 {
   "name": "andvet診療マニュアル",
   "short_name": "andvet",
-  "description": "内科疾患セミナーシリーズを統一形式にまとめた、検索できる診療マニュアル",
+  "description": "獣医療の診療マニュアルを統一形式にまとめた、検索できるアプリ",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
