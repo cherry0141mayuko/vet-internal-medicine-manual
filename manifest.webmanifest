@@ -1,0 +1,26 @@
+{
+  "name": "andvet診療マニュアル",
+  "short_name": "andvet",
+  "description": "内科疾患セミナーシリーズを統一形式にまとめた、検索できる診療マニュアル",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "lang": "ja",
+  "background_color": "#f6f7f9",
+  "theme_color": "#1f7a8c",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
