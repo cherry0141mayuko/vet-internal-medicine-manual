@@ -16,14 +16,15 @@ jobs:
     #     (誰でも開ける公開Issueのため、提案の作成者自体も信頼できるかを確認する。
     #      第三者が勝手に作った偽の提案が、承認コメントの見落としで反映されるのを防ぐ)
     #  3. 承認コメント自体もリポジトリ所有者(cherry0141mayuko)が書いたこと
-    #  4. コメント本文が「/approve」と完全一致すること(部分一致による誤トリガーを防ぐ)
+    #  4. コメント本文が「/approve」であること(前後の改行のみ許容。GitHub Actions式に
+    #     trim() は無いため、想定される改行パターンとの完全一致で判定する)
     if: >
       github.event.issue.state == 'open' &&
       startsWith(github.event.issue.title, '[承認待ち]') &&
       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association) &&
       github.event.comment.user.login == 'cherry0141mayuko' &&
       github.event.comment.author_association == 'OWNER' &&
-      trim(github.event.comment.body) == '/approve'
+      (github.event.comment.body == '/approve' || github.event.comment.body == '/approve\n' || github.event.comment.body == '/approve\r\n')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
