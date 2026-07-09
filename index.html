@@ -246,6 +246,28 @@ button.pdf-chip:hover{ filter:brightness(1.05); }
 .pwa-modal-close{ position:absolute; top:12px; right:12px; border:none; background:transparent; color:var(--muted);
   font-size:1.1rem; cursor:pointer; line-height:1; padding:4px; }
 
+/* --- マニュアル編集機能 --- */
+.edit-open-btn{ display:inline-block; margin:10px 0 4px; border:1px solid var(--line); background:var(--panel);
+  color:var(--accent); font-weight:700; font-size:.85rem; padding:6px 14px; border-radius:9px; cursor:pointer; }
+.edit-open-btn:hover{ background:var(--accent-soft); }
+.edit-toolbar{ position:sticky; top:59px; z-index:15; display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+  background:var(--panel); border:1px solid var(--accent); border-radius:12px; padding:10px 12px; margin:12px 0; }
+.edit-toolbar-spacer{ flex:1; }
+.edit-btn{ border:1px solid var(--line); background:var(--bg); color:var(--ink); font-size:.85rem; font-weight:600;
+  padding:7px 12px; border-radius:8px; cursor:pointer; white-space:nowrap; }
+.edit-btn:hover{ background:var(--accent-soft); }
+.edit-btn-primary{ background:var(--accent); color:#fff; border-color:var(--accent); }
+.edit-btn-primary:hover{ filter:brightness(1.06); }
+.edit-btn-ghost{ background:transparent; color:var(--draft-ink); border-color:var(--line); }
+.manual .body.editing{ outline:2px dashed var(--accent); outline-offset:6px; border-radius:8px; padding:10px; cursor:text; }
+.edit-confirm-msg{ margin:0 0 16px; font-size:.95rem; line-height:1.6; color:var(--ink); white-space:pre-line; }
+.edit-confirm-actions{ display:flex; gap:10px; justify-content:flex-end; }
+@media (max-width:600px){
+  .edit-toolbar{ position:static; }
+  .edit-confirm-actions{ flex-direction:column-reverse; }
+  .edit-confirm-actions .edit-btn{ width:100%; text-align:center; }
+}
+
 </style>
 </head>
 <body>
@@ -267,7 +289,7 @@ button.pdf-chip:hover{ filter:brightness(1.05); }
       <div id="welcome" class="welcome">
         <h1>andvet診療マニュアル</h1>
         <p>診療マニュアルを、統一形式にまとめた検索できるアプリです。上の検索窓にキーワードを入れるか、左のカテゴリから選んでください。現在は内科領域を中心に収録していますが、今後、他の分野のマニュアルも順次追加していきます。</p>
-        <p class="muted">掲載する数値・用量は原典の記載どおりに整理しています。現在はすべて<strong>「未承認(draft)」= AIが作成した草案</strong>で、獣医師の確認・承認前です。診療判断は必ず最新のガイドライン・文献で確認してください。各マニュアル下部から<strong>関連文献の登録(PDF本文も保存可)</strong>もできます。スマホでは「ホーム画面に追加」でアプリのように開けます。</p>
+        <p class="muted">掲載する数値・用量は原典の記載どおりに整理しています。現在はすべて<strong>「未承認(draft)」= AIが作成した草案</strong>で、獣医師の確認・承認前です。診療判断は必ず最新のガイドライン・文献で確認してください。各マニュアルは<strong>右上の「✎ 編集」から修正を提案</strong>でき、承認後にサイトへ反映されます。関連文献の登録(PDF本文も保存可)もできます。スマホでは「ホーム画面に追加」でアプリのように開けます。</p>
         <p class="muted" id="buildInfo"></p>
       </div>
       <div id="results" class="results" hidden></div>
@@ -829,6 +851,201 @@ window.BUILD_INFO = {count: 16};
     });
   }
   new MutationObserver(function(){ enhance(); }).observe(manual, {childList:true});
+  enhance();
+})();
+
+/* マニュアル編集機能: 確認→編集(テキスト・画像)→更新(承認待ちIssue作成)/元に戻す/編集をやめる
+   承認されるまでサイト本体(index.html)は変わらない。承認はGitHub Issueへの /approve コメントで行う。 */
+(function () {
+  "use strict";
+  var manual = document.getElementById("manual");
+  if (!manual) return;
+
+  var REPO_OWNER = "cherry0141mayuko";
+  var REPO_NAME = "vet-internal-medicine-manual";
+
+  function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+  var editing = false, originalHTML = null, bodyEl = null, insertedImageNames = [];
+
+  function showConfirm(message, okLabel, cancelLabel){
+    return new Promise(function (resolve) {
+      var overlay = document.createElement("div");
+      overlay.className = "pwa-modal-overlay edit-confirm-overlay";
+      overlay.innerHTML =
+        "<div class='pwa-modal' role='dialog' aria-modal='true'>" +
+        "<p class='edit-confirm-msg'>" + esc(message) + "</p>" +
+        "<div class='edit-confirm-actions'>" +
+        (cancelLabel ? "<button type='button' class='edit-btn edit-btn-ghost' data-v='0'>" + esc(cancelLabel) + "</button>" : "") +
+        "<button type='button' class='edit-btn edit-btn-primary' data-v='1'>" + esc(okLabel || "OK") + "</button>" +
+        "</div></div>";
+      document.body.appendChild(overlay);
+      overlay.addEventListener("click", function (e) {
+        if (e.target === overlay) { overlay.remove(); resolve(false); return; }
+        var v = e.target.getAttribute("data-v");
+        if (v != null) { overlay.remove(); resolve(v === "1"); }
+      });
+    });
+  }
+
+  function lockSpecialElements(root){
+    root.querySelectorAll("svg, .flowchart, img").forEach(function (el) {
+      el.setAttribute("contenteditable", "false");
+    });
+  }
+
+  function buildToolbar(){
+    var bar = document.createElement("div");
+    bar.className = "edit-toolbar";
+    bar.innerHTML =
+      "<button type='button' class='edit-btn' id='editInsertImg'>🖼 画像を挿入</button>" +
+      "<button type='button' class='edit-btn' id='editRevert'>↺ 元に戻す</button>" +
+      "<span class='edit-toolbar-spacer'></span>" +
+      "<button type='button' class='edit-btn edit-btn-ghost' id='editCancel'>編集をやめる</button>" +
+      "<button type='button' class='edit-btn edit-btn-primary' id='editSubmit'>更新</button>";
+    return bar;
+  }
+
+  function insertImageAtCursor(dataUrl, name){
+    var img = document.createElement("img");
+    img.src = dataUrl;
+    img.alt = name || "挿入画像";
+    img.setAttribute("contenteditable", "false");
+    var sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && bodyEl.contains(sel.anchorNode)) {
+      var range = sel.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(img);
+      range.setStartAfter(img);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } else {
+      bodyEl.appendChild(img);
+    }
+    insertedImageNames.push(name || "image");
+  }
+
+  function exitEdit(restore){
+    if (restore && originalHTML != null) bodyEl.innerHTML = originalHTML;
+    bodyEl.removeAttribute("contenteditable");
+    bodyEl.classList.remove("editing");
+    var bar = manual.querySelector(".edit-toolbar");
+    if (bar) bar.remove();
+    var openBtn = manual.querySelector(".edit-open-btn");
+    if (openBtn) openBtn.hidden = false;
+    editing = false; originalHTML = null; insertedImageNames = [];
+  }
+
+  function enterEdit(){
+    bodyEl = manual.querySelector(".body");
+    if (!bodyEl) return;
+    originalHTML = bodyEl.innerHTML;
+    bodyEl.setAttribute("contenteditable", "true");
+    bodyEl.classList.add("editing");
+    lockSpecialElements(bodyEl);
+    var bar = buildToolbar();
+    manual.insertBefore(bar, bodyEl);
+    var openBtn = manual.querySelector(".edit-open-btn");
+    if (openBtn) openBtn.hidden = true;
+    editing = true; insertedImageNames = [];
+
+    bar.querySelector("#editRevert").addEventListener("click", function () {
+      bodyEl.innerHTML = originalHTML;
+      lockSpecialElements(bodyEl);
+      insertedImageNames = [];
+    });
+    bar.querySelector("#editCancel").addEventListener("click", function () {
+      showConfirm("編集内容は失われます。よろしいですか?", "編集をやめる", "続ける").then(function (ok) {
+        if (ok) exitEdit(true);
+      });
+    });
+    bar.querySelector("#editInsertImg").addEventListener("click", function () {
+      var input = document.createElement("input");
+      input.type = "file"; input.accept = "image/*";
+      input.addEventListener("change", function () {
+        var file = input.files && input.files[0];
+        if (!file) return;
+        var reader = new FileReader();
+        reader.onload = function () { insertImageAtCursor(reader.result, file.name); };
+        reader.readAsDataURL(file);
+      });
+      input.click();
+    });
+    bar.querySelector("#editSubmit").addEventListener("click", submitEdit);
+  }
+
+  function fallbackCopy(text){
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); } catch (e) { /* noop */ }
+    document.body.removeChild(ta);
+  }
+
+  function submitEdit(){
+    var id = manual.dataset.id;
+    var titleEl = manual.querySelector("h1");
+    var title = titleEl ? titleEl.textContent : id;
+    var newHtml = bodyEl.innerHTML;
+
+    var issueTitle = "[承認待ち] " + title + "の編集 (id: " + id + ")";
+    var bodyLines = [
+      "manual_id: " + id,
+      "",
+      "承認する場合は、このIssueに `/approve` とコメントしてください。",
+      "",
+      "```html",
+      newHtml,
+      "```"
+    ];
+    if (insertedImageNames.length) {
+      bodyLines.push(
+        "",
+        "**画像添付が必要です**: 下の投稿欄に、次のファイルをドラッグ&ドロップしてから投稿してください: " +
+        insertedImageNames.join(", ")
+      );
+    }
+    var issueBody = bodyLines.join("\n");
+
+    function openIssueTab(){
+      var url = "https://github.com/" + REPO_OWNER + "/" + REPO_NAME + "/issues/new?title=" + encodeURIComponent(issueTitle);
+      window.open(url, "_blank");
+    }
+
+    var copyPromise = (navigator.clipboard && navigator.clipboard.writeText)
+      ? navigator.clipboard.writeText(issueBody).catch(function () { fallbackCopy(issueBody); })
+      : Promise.resolve(fallbackCopy(issueBody));
+
+    copyPromise.then(function () {
+      openIssueTab();
+      var msg = "本文をコピーしました。開いたGitHubのタブの本文欄に貼り付けて(⌘V / Ctrl+V)、\n" +
+        "「Submit new issue」を押してください。" +
+        (insertedImageNames.length ? "\n画像も追加でドラッグ&ドロップしてください。" : "") +
+        "\n\n承認されるまで、サイトの内容は変わりません。";
+      return showConfirm(msg, "OK", null);
+    }).then(function () {
+      exitEdit(true);
+    });
+  }
+
+  function enhance(){
+    var chips = manual.querySelector(".chips");
+    if (!chips || manual.querySelector(".edit-open-btn")) return;
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "edit-open-btn";
+    btn.textContent = "✎ 編集";
+    chips.parentNode.insertBefore(btn, chips.nextSibling);
+    btn.addEventListener("click", function () {
+      showConfirm("本当に編集しますか?", "編集する", "やめる").then(function (ok) {
+        if (ok) enterEdit();
+      });
+    });
+  }
+  new MutationObserver(function () { if (!editing) enhance(); }).observe(manual, {childList: true});
   enhance();
 })();
 

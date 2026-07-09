@@ -1,0 +1,67 @@
+name: Approve manual edit
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  approve:
+    # 反映の条件(すべて満たす場合のみ):
+    #  1. Issueのタイトルが編集提案の形式であること
+    #  2. Issue自体が「信頼できる協力者(Collaborator/Member/Owner)」によって作られていること
+    #     (誰でも開ける公開Issueのため、提案の作成者自体も信頼できるかを確認する。
+    #      第三者が勝手に作った偽の提案が、承認コメントの見落としで反映されるのを防ぐ)
+    #  3. 承認コメント自体もリポジトリ所有者(cherry0141mayuko)が書いたこと
+    #  4. コメント本文が「/approve」と完全一致すること(部分一致による誤トリガーを防ぐ)
+    if: >
+      github.event.issue.state == 'open' &&
+      startsWith(github.event.issue.title, '[承認待ち]') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association) &&
+      github.event.comment.user.login == 'cherry0141mayuko' &&
+      github.event.comment.author_association == 'OWNER' &&
+      trim(github.event.comment.body) == '/approve'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install sanitizer
+        run: pip install bleach
+
+      - name: Apply edit to index.html (HTMLはサニタイズしてから反映)
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: python3 .github/scripts/apply_edit.py
+
+      - name: Commit and push
+        run: |
+          git config user.name "vet-manual-bot"
+          git config user.email "actions@github.com"
+          git add index.html
+          git commit -m "承認された編集を反映 (issue #${{ github.event.issue.number }})"
+          git push
+
+      - name: Comment and close issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: "反映しました。内容は安全のためサニタイズ(不要なタグ・属性の除去)を経て公開されています。数分後にサイトに反映されます: https://cherry0141mayuko.github.io/vet-internal-medicine-manual/"
+            });
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              state: "closed"
+            });
