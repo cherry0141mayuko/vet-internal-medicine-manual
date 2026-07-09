@@ -317,12 +317,14 @@ window.BUILD_INFO = {count: 16};
   var el = {
     search: document.getElementById("search"),
     catList: document.getElementById("catList"),
+    sidebar: document.getElementById("sidebar"),
     welcome: document.getElementById("welcome"),
     results: document.getElementById("results"),
     manual: document.getElementById("manual"),
     buildInfo: document.getElementById("buildInfo"),
     themeToggle: document.getElementById("themeToggle"),
   };
+  var narrowScreen = window.matchMedia("(max-width:760px)");
 
   /* ---------- テーマ(明/暗) ---------- */
   function applyTheme(t) {
@@ -461,6 +463,10 @@ window.BUILD_INFO = {count: 16};
     el.welcome.hidden = which !== "welcome";
     el.results.hidden = which !== "results";
     el.manual.hidden = which !== "manual";
+    // スマホ幅ではマニュアル表示中だけカテゴリ一覧を隠し、目的のマニュアルへすぐ
+    // たどり着けるようにする(カテゴリ一覧が上に居座ってスクロールが必要になる問題への対処)。
+    if (el.sidebar) el.sidebar.hidden = which === "manual" && narrowScreen.matches;
+    if (which === "manual") window.scrollTo(0, 0);
   }
   function showWelcome() { show("welcome"); }
 
